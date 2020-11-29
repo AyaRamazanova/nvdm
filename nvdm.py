@@ -113,7 +113,7 @@ def train(sess, model,
   else:
       reader = Reader(train_url)
       train_set, train_count = reader.covert2freq()
-      #reader.dump('vocab.new')
+      reader.dump(train_url)
       test_set, test_count = train_set[-200:], train_count[-200:]
       train_set, train_count = train_set[:-200], train_count[:-200]
   # hold-out development dataset
@@ -238,7 +238,7 @@ def main(argv=None):
     init = tf.global_variables_initializer()
     sess.run(init)
 
-    train_url = os.path.join(FLAGS.data_dir, 'train.feat')
+    train_url = os.path.join(FLAGS.data_dir, 'test_arxiv_plain.txt')
     test_url = os.path.join(FLAGS.data_dir, 'test.feat')
 
     train(sess, nvdm, train_url, test_url, FLAGS.batch_size, FLAGS.preprocessed)
