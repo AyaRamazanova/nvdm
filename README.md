@@ -5,21 +5,33 @@
 This is the tensorflow implementation of NVDM for the paper: 
 [Neural Variational Inference for Text Processing][1]. Yishu Miao, Lei Yu, Phil Blunsom. ICML 2016.
 
-The original code is on torch. Since there are quite a few people asked me questions about the implementation, I have reimplemented the model by tensorflow. Please contact me if you find any problem with this implementation. It is able to achieve better results than the ones reported in the paper. 
+Rewritten to run on arxiv dataset.
 
-### RCV1-v2 dataset
+### Arxiv dataset
 Please download and uncompress the [dataset][2] to: 
 ```
-data/rcv1-v2
+data/arxiv
 ```
 ### Train the Model
 
 ```
-python nvdm.py --data_dir data/20news/
+python nvdm.py --data_dir data/arxiv/
+```
+The script allows to specify the following parameters:
+```
+  --data_dir        Data dir path
+  --learning_rate   Learning rate
+  --batch_size      Batch size
+  --n_hidden        Size of each hidden layer
+  --n_topic         Size of stochastic vector
+  --n_sample        Number of samples
+  --vocab_size      Vocabulary size
+  --test            Process test data
+  --non_linearity   Non-linearity of the MLP
+  --preprocessed    Wheather the test data was preprocessed
+  
 ```
 
-
-
   [1]: https://arxiv.org/abs/1511.06038
-  [2]: https://drive.google.com/open?id=0ByuyRPR04lmnVzhmT1RoVTZOb1E
+  [2]: https://disk.yandex.ru/d/mF1Ho1NgKFNwQg?w=1
   [3]: https://arxiv.org/abs/1511.06038
