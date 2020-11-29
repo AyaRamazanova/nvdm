@@ -5,9 +5,10 @@ import numpy as np
 #import tensorflow as tf
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
-import math
 import os
 import utils as utils
+from preprocessor import Reader
+import pickle
 
 np.random.seed(0)
 tf.set_random_seed(0)
@@ -20,10 +21,12 @@ flags.DEFINE_float('learning_rate', 5e-5, 'Learning rate.')
 flags.DEFINE_integer('batch_size', 64, 'Batch size.')
 flags.DEFINE_integer('n_hidden', 500, 'Size of each hidden layer.')
 flags.DEFINE_integer('n_topic', 50, 'Size of stochastic vector.')
-flags.DEFINE_integer('n_sample', 1, 'Number of samples.')
-flags.DEFINE_integer('vocab_size', 2000, 'Vocabulary size.')
+flags.DEFINE_integer('n_sample', 3, 'Number of samples.')
+flags.DEFINE_integer('vocab_size', 122199, 'Vocabulary size.')
+#default value 2000
 flags.DEFINE_boolean('test', False, 'Process test data.')
 flags.DEFINE_string('non_linearity', 'tanh', 'Non-linearity of the MLP.')
+flags.DEFINE_boolean('preprocessed', False, 'Process test data.')
 FLAGS = flags.FLAGS
 
 class NVDM(object):
@@ -52,8 +55,8 @@ class NVDM(object):
         with tf.variable_scope('encoder'): 
           self.enc_vec = utils.mlp(self.x, [self.n_hidden], self.non_linearity)
           self.mean = utils.linear(self.enc_vec, self.n_topic, scope='mean')
-          self.logsigm = utils.linear(self.enc_vec, 
-                                     self.n_topic, 
+          self.logsigm = utils.linear(self.enc_vec,
+                                     self.n_topic,
                                      bias_start_zero=True,
                                      matrix_start_zero=True,
                                      scope='logsigm')
@@ -69,14 +72,15 @@ class NVDM(object):
           # multiple samples
           else:
             eps = tf.random_normal((self.n_sample*batch_size, self.n_topic), 0, 1)
-            eps_list = tf.split(0, self.n_sample, eps)
+            eps_list = tf.split(eps, self.n_sample, 0)
             recons_loss_list = []
-            for i in xrange(self.n_sample):
+            for i in range(self.n_sample):
               if i > 0: tf.get_variable_scope().reuse_variables()
               curr_eps = eps_list[i]
-              doc_vec = tf.mul(tf.exp(self.logsigm), curr_eps) + self.mean
+              doc_vec = tf.multiply(tf.exp(self.logsigm),
+                                    curr_eps) + self.mean
               logits = tf.nn.log_softmax(utils.linear(doc_vec, self.vocab_size, scope='projection'))
-              recons_loss_list.append(-tf.reduce_sum(tf.mul(logits, self.x), 1))
+              recons_loss_list.append(-tf.reduce_sum(tf.multiply(logits, self.x), 1))
             self.recons_loss = tf.add_n(recons_loss_list) / self.n_sample
 
         self.objective = self.recons_loss + self.kld
@@ -93,22 +97,32 @@ class NVDM(object):
         self.optim_enc = optimizer.apply_gradients(zip(enc_grads, enc_vars))
         self.optim_dec = optimizer.apply_gradients(zip(dec_grads, dec_vars))
 
-def train(sess, model, 
-          train_url, 
-          test_url, 
-          batch_size, 
-          training_epochs=1000, 
+def train(sess, model,
+          train_url,
+          test_url,
+          batch_size,
+          preprocessed,
+          training_epochs=1,
           alternate_epochs=10):
   """train nvdm model."""
-  train_set, train_count = utils.data_set(train_url)
-  test_set, test_count = utils.data_set(test_url)
+  if preprocessed:
+      train_set, train_count = utils.data_set(train_url)
+      #test_set, test_count = utils.data_set(test_url)
+      test_set, test_count = train_set[-200:], train_count[-200:]
+      train_set, train_count = train_set[:-200], train_count[:-200]
+  else:
+      reader = Reader(train_url)
+      train_set, train_count = reader.covert2freq()
+      #reader.dump('vocab.new')
+      test_set, test_count = train_set[-200:], train_count[-200:]
+      train_set, train_count = train_set[:-200], train_count[:-200]
   # hold-out development dataset
   dev_set = test_set[:50]
   dev_count = test_count[:50]
 
   dev_batches = utils.create_batches(len(dev_set), batch_size, shuffle=False)
   test_batches = utils.create_batches(len(test_set), batch_size, shuffle=False)
-  
+
   for epoch in range(training_epochs):
     train_batches = utils.create_batches(len(train_set), batch_size, shuffle=True)
     #-------------------------------
@@ -130,25 +144,26 @@ def train(sess, model,
           data_batch, count_batch, mask = utils.fetch_data(
           train_set, train_count, idx_batch, FLAGS.vocab_size)
           input_feed = {model.x.name: data_batch, model.mask.name: mask}
-          _, (loss, kld) = sess.run((optim, 
+          _, (loss, kld) = sess.run((optim,
                                     [model.objective, model.kld]),
                                     input_feed)
           loss_sum += np.sum(loss)
-          kld_sum += np.sum(kld) / np.sum(mask) 
+          kld_sum += np.sum(kld) / np.sum(mask)
           word_count += np.sum(count_batch)
           # to avoid nan error
           count_batch = np.add(count_batch, 1e-12)
           # per document loss
-          ppx_sum += np.sum(np.divide(loss, count_batch)) 
+          ppx_sum += np.sum(np.divide(loss, count_batch))
           doc_count += np.sum(mask)
         print_ppx = np.exp(loss_sum / word_count)
         print_ppx_perdoc = np.exp(ppx_sum / doc_count)
         print_kld = kld_sum/len(train_batches)
-        print('| Epoch train: {:d} |'.format(epoch+1), 
+        print('| Epoch train: {:d} |'.format(epoch+1),
                print_mode, '{:d}'.format(i),
                '| Corpus ppx: {:.5f}'.format(print_ppx),  # perplexity for all docs
                '| Per doc ppx: {:.5f}'.format(print_ppx_perdoc),  # perplexity for per doc
                '| KLD: {:.5}'.format(print_kld))
+
     #-------------------------------
     # dev
     loss_sum = 0.0
@@ -163,18 +178,19 @@ def train(sess, model,
       loss, kld = sess.run([model.objective, model.kld],
                            input_feed)
       loss_sum += np.sum(loss)
-      kld_sum += np.sum(kld) / np.sum(mask)  
+      kld_sum += np.sum(kld) / np.sum(mask)
       word_count += np.sum(count_batch)
       count_batch = np.add(count_batch, 1e-12)
       ppx_sum += np.sum(np.divide(loss, count_batch))
-      doc_count += np.sum(mask) 
+      doc_count += np.sum(mask)
     print_ppx = np.exp(loss_sum / word_count)
     print_ppx_perdoc = np.exp(ppx_sum / doc_count)
     print_kld = kld_sum/len(dev_batches)
-    print('| Epoch dev: {:d} |'.format(epoch+1), 
+    print('| Epoch dev: {:d} |'.format(epoch+1),
            '| Perplexity: {:.9f}'.format(print_ppx),
            '| Per doc ppx: {:.5f}'.format(print_ppx_perdoc),
-           '| KLD: {:.5}'.format(print_kld))        
+           '| KLD: {:.5}'.format(print_kld))
+
     #-------------------------------
     # test
     if FLAGS.test:
@@ -190,18 +206,18 @@ def train(sess, model,
         loss, kld = sess.run([model.objective, model.kld],
                              input_feed)
         loss_sum += np.sum(loss)
-        kld_sum += np.sum(kld)/np.sum(mask) 
+        kld_sum += np.sum(kld)/np.sum(mask)
         word_count += np.sum(count_batch)
         count_batch = np.add(count_batch, 1e-12)
         ppx_sum += np.sum(np.divide(loss, count_batch))
-        doc_count += np.sum(mask) 
+        doc_count += np.sum(mask)
       print_ppx = np.exp(loss_sum / word_count)
       print_ppx_perdoc = np.exp(ppx_sum / doc_count)
       print_kld = kld_sum/len(test_batches)
-      print('| Epoch test: {:d} |'.format(epoch+1), 
+      print('| Epoch test: {:d} |'.format(epoch+1),
              '| Perplexity: {:.9f}'.format(print_ppx),
              '| Per doc ppx: {:.5f}'.format(print_ppx_perdoc),
-             '| KLD: {:.5}'.format(print_kld))   
+             '| KLD: {:.5} '.format(print_kld))
 
 def main(argv=None):
     if FLAGS.non_linearity == 'tanh':
@@ -219,13 +235,13 @@ def main(argv=None):
                 batch_size=FLAGS.batch_size,
                 non_linearity=non_linearity)
     sess = tf.Session()
-    init = tf.initialize_all_variables()
+    init = tf.global_variables_initializer()
     sess.run(init)
 
     train_url = os.path.join(FLAGS.data_dir, 'train.feat')
     test_url = os.path.join(FLAGS.data_dir, 'test.feat')
 
-    train(sess, nvdm, train_url, test_url, FLAGS.batch_size)
+    train(sess, nvdm, train_url, test_url, FLAGS.batch_size, FLAGS.preprocessed)
 
 if __name__ == '__main__':
     tf.app.run()
