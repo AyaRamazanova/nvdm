@@ -2,28 +2,25 @@
 from __future__ import print_function
 
 import numpy as np
-#import tensorflow as tf
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 import os
 import utils as utils
 from preprocessor import Reader
-import pickle
+import os.path
 
 np.random.seed(0)
 tf.set_random_seed(0)
-#tf.random.set_seed(0)
 
 flags = tf.compat.v1.flags
-#flags = tf.app.flags
-flags.DEFINE_string('data_dir', 'data/20news', 'Data dir path.')
+flags.DEFINE_string('data_dir', 'data/arxiv', 'Data dir path.')
 flags.DEFINE_float('learning_rate', 5e-5, 'Learning rate.')
 flags.DEFINE_integer('batch_size', 64, 'Batch size.')
 flags.DEFINE_integer('n_hidden', 500, 'Size of each hidden layer.')
 flags.DEFINE_integer('n_topic', 50, 'Size of stochastic vector.')
 flags.DEFINE_integer('n_sample', 3, 'Number of samples.')
 flags.DEFINE_integer('vocab_size', 122199, 'Vocabulary size.')
-#default value 2000
+
 flags.DEFINE_boolean('test', False, 'Process test data.')
 flags.DEFINE_string('non_linearity', 'tanh', 'Non-linearity of the MLP.')
 flags.DEFINE_boolean('preprocessed', False, 'Process test data.')
@@ -97,23 +94,24 @@ class NVDM(object):
         self.optim_enc = optimizer.apply_gradients(zip(enc_grads, enc_vars))
         self.optim_dec = optimizer.apply_gradients(zip(dec_grads, dec_vars))
 
+
 def train(sess, model,
           train_url,
-          test_url,
           batch_size,
           preprocessed,
           training_epochs=1,
           alternate_epochs=10):
   """train nvdm model."""
+  dump_url = os.path.join(train_url, 'preprocessed_arxiv_plain.txt')
   if preprocessed:
-      train_set, train_count = utils.data_set(train_url)
-      #test_set, test_count = utils.data_set(test_url)
+      train_set, train_count = utils.data_set(dump_url)
       test_set, test_count = train_set[-200:], train_count[-200:]
       train_set, train_count = train_set[:-200], train_count[:-200]
   else:
-      reader = Reader(train_url)
+      url = os.path.join(train_url, 'test_arxiv_plain.txt')
+      reader = Reader(url)
       train_set, train_count = reader.covert2freq()
-      reader.dump(train_url)
+      reader.dump(dump_url)
       test_set, test_count = train_set[-200:], train_count[-200:]
       train_set, train_count = train_set[:-200], train_count[:-200]
   # hold-out development dataset
@@ -122,6 +120,8 @@ def train(sess, model,
 
   dev_batches = utils.create_batches(len(dev_set), batch_size, shuffle=False)
   test_batches = utils.create_batches(len(test_set), batch_size, shuffle=False)
+
+  #saver = tf.train.Saver()
 
   for epoch in range(training_epochs):
     train_batches = utils.create_batches(len(train_set), batch_size, shuffle=True)
@@ -163,6 +163,7 @@ def train(sess, model,
                '| Corpus ppx: {:.5f}'.format(print_ppx),  # perplexity for all docs
                '| Per doc ppx: {:.5f}'.format(print_ppx_perdoc),  # perplexity for per doc
                '| KLD: {:.5}'.format(print_kld))
+        #saver.save(sess, 'nvdm-model', global_step=idx_batch)
 
     #-------------------------------
     # dev
@@ -236,13 +237,12 @@ def main(argv=None):
                 non_linearity=non_linearity)
     sess = tf.Session()
     init = tf.global_variables_initializer()
+    # if os.path.isfile('nvdm-model'):
+    #     new_saver = tf.train.import_meta_graph('nvdm-model')
+    #     new_saver.restore(sess, tf.train.latest_checkpoint('./'))
     sess.run(init)
 
-    train_url = os.path.join(FLAGS.data_dir, 'test_arxiv_plain.txt')
-    test_url = os.path.join(FLAGS.data_dir, 'test.feat')
-
-    train(sess, nvdm, train_url, test_url, FLAGS.batch_size, FLAGS.preprocessed)
+    train(sess, nvdm, FLAGS.data_dir, FLAGS.batch_size, FLAGS.preprocessed)
 
 if __name__ == '__main__':
     tf.app.run()
-    #tf.compat.v1.app.run()
